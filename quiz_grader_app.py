@@ -68,6 +68,14 @@ class QuizGraderApp:
 
         self.comments_text = None
         self.rubric_checks_frame = None
+        self.rubric_canvas = None
+        self.rubric_canvas_window = None
+        self.info_box = None
+        self.nav_bar = None
+        self.rubric_setup_box = None
+        self.grade_box = None
+        self.map_box = None
+        self.output_box = None
         self.unmatched_combo = None
         self.map_student_combo = None
         self.pdf_canvas = None
@@ -89,6 +97,11 @@ class QuizGraderApp:
 
         ttk.Label(top, text="Full Score").grid(row=0, column=3, sticky="e")
         ttk.Entry(top, textvariable=self.full_score_var, width=8).grid(row=0, column=4, sticky="w")
+
+        top_output = ttk.LabelFrame(top, text="Output", padding=4)
+        top_output.grid(row=0, column=5, rowspan=2, sticky="ne", padx=(8, 0))
+        ttk.Button(top_output, text="Save", width=8, command=self._save_state).pack(fill=tk.X)
+        ttk.Button(top_output, text="Clear", width=8, command=self._clear_state_with_confirm).pack(fill=tk.X, pady=(4, 0))
 
         top.columnconfigure(1, weight=1)
 
@@ -129,24 +142,24 @@ class QuizGraderApp:
         self.pdf_canvas.bind("<MouseWheel>", self._pdf_on_mousewheel)
         self.pdf_canvas.bind("<Configure>", self._pdf_on_canvas_resize)
 
-        info = ttk.LabelFrame(right, text="Current Student", padding=8)
-        info.pack(fill=tk.X)
-        ttk.Label(info, textvariable=self.info_name_var).pack(anchor="w")
-        ttk.Label(info, textvariable=self.info_netid_var).pack(anchor="w")
-        ttk.Label(info, textvariable=self.info_email_var).pack(anchor="w")
-        ttk.Label(info, textvariable=self.info_submission_var).pack(anchor="w")
-        ttk.Label(info, textvariable=self.info_progress_var).pack(anchor="w", pady=(4, 0))
+        self.info_box = ttk.LabelFrame(right, text="Current Student", padding=8)
+        self.info_box.pack(fill=tk.X)
+        ttk.Label(self.info_box, textvariable=self.info_name_var).pack(anchor="w")
+        ttk.Label(self.info_box, textvariable=self.info_netid_var).pack(anchor="w")
+        ttk.Label(self.info_box, textvariable=self.info_email_var).pack(anchor="w")
+        ttk.Label(self.info_box, textvariable=self.info_submission_var).pack(anchor="w")
+        ttk.Label(self.info_box, textvariable=self.info_progress_var).pack(anchor="w", pady=(4, 0))
 
-        nav = ttk.Frame(right, padding=(0, 8))
-        nav.pack(fill=tk.X)
-        ttk.Button(nav, text="Next Ungraded", command=self._go_next_ungraded).pack(side=tk.LEFT)
-        ttk.Button(nav, text="Save + Next Ungraded", command=self._save_and_next_ungraded).pack(side=tk.LEFT, padx=6)
-        ttk.Button(nav, text="Previous", command=self._go_previous).pack(side=tk.LEFT, padx=6)
-        ttk.Button(nav, text="Next Student", command=self._go_next).pack(side=tk.LEFT)
+        self.nav_bar = ttk.Frame(right, padding=(0, 8))
+        self.nav_bar.pack(fill=tk.X)
+        ttk.Button(self.nav_bar, text="Next Ungraded", command=self._go_next_ungraded).pack(side=tk.LEFT)
+        ttk.Button(self.nav_bar, text="Save + Next Ungraded", command=self._save_and_next_ungraded).pack(side=tk.LEFT, padx=6)
+        ttk.Button(self.nav_bar, text="Previous", command=self._go_previous).pack(side=tk.LEFT, padx=6)
+        ttk.Button(self.nav_bar, text="Next Student", command=self._go_next).pack(side=tk.LEFT)
 
-        rubric_box = ttk.LabelFrame(right, text="Rubric Setup", padding=8)
-        rubric_box.pack(fill=tk.X)
-        add_row = ttk.Frame(rubric_box)
+        self.rubric_setup_box = ttk.LabelFrame(right, text="Rubric Setup", padding=8)
+        self.rubric_setup_box.pack(fill=tk.X)
+        add_row = ttk.Frame(self.rubric_setup_box)
         add_row.pack(fill=tk.X)
         ttk.Label(add_row, text="Name").pack(side=tk.LEFT)
         name_entry = ttk.Entry(add_row, textvariable=self.add_rubric_name_var, width=18)
@@ -159,43 +172,50 @@ class QuizGraderApp:
         name_entry.bind("<Return>", lambda _e: self._add_rubric_item())
         points_entry.bind("<Return>", lambda _e: self._add_rubric_item())
 
-        grade_box = ttk.LabelFrame(right, text="Rubric + Grading", padding=8)
-        grade_box.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+        self.grade_box = ttk.LabelFrame(right, text="Rubric + Grading", padding=8)
+        self.grade_box.pack(fill=tk.X, expand=False, pady=(8, 0))
 
-        self.rubric_checks_frame = ttk.Frame(grade_box)
-        self.rubric_checks_frame.pack(fill=tk.X, pady=(0, 8))
+        rubric_list_wrap = ttk.Frame(self.grade_box)
+        rubric_list_wrap.pack(fill=tk.X, pady=(0, 8))
+        self.rubric_canvas = tk.Canvas(rubric_list_wrap, height=96, highlightthickness=0)
+        rubric_scroll = ttk.Scrollbar(rubric_list_wrap, orient=tk.VERTICAL, command=self.rubric_canvas.yview)
+        self.rubric_canvas.configure(yscrollcommand=rubric_scroll.set)
+        self.rubric_canvas.grid(row=0, column=0, sticky="nsew")
+        rubric_scroll.grid(row=0, column=1, sticky="ns")
+        rubric_list_wrap.columnconfigure(0, weight=1)
 
-        extra = ttk.Frame(grade_box)
+        self.rubric_checks_frame = ttk.Frame(self.rubric_canvas)
+        self.rubric_canvas_window = self.rubric_canvas.create_window((0, 0), window=self.rubric_checks_frame, anchor="nw")
+        self.rubric_checks_frame.bind("<Configure>", self._on_rubric_frame_configure)
+        self.rubric_canvas.bind("<Configure>", self._on_rubric_canvas_configure)
+
+        extra = ttk.Frame(self.grade_box)
         extra.pack(fill=tk.X)
         ttk.Label(extra, text="Extra deduction").pack(side=tk.LEFT)
         ttk.Entry(extra, textvariable=self.extra_deduction_var, width=8).pack(side=tk.LEFT, padx=6)
         self.extra_deduction_var.trace_add("write", lambda *_: self._update_score_preview())
 
-        ttk.Label(grade_box, textvariable=self.computed_score_var, font=("TkDefaultFont", 12, "bold")).pack(
+        ttk.Label(self.grade_box, textvariable=self.computed_score_var, font=("TkDefaultFont", 12, "bold")).pack(
             anchor="w", pady=(8, 6)
         )
 
-        ttk.Label(grade_box, text="Comments").pack(anchor="w")
-        self.comments_text = tk.Text(grade_box, height=6, width=70)
-        self.comments_text.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(self.grade_box, text="Comments").pack(anchor="w")
+        self.comments_text = tk.Text(self.grade_box, height=3, width=70)
+        self.comments_text.pack(fill=tk.X, expand=False)
 
-        grade_actions = ttk.Frame(grade_box, padding=(0, 8, 0, 0))
+        grade_actions = ttk.Frame(self.grade_box, padding=(0, 8, 0, 0))
         grade_actions.pack(fill=tk.X)
         ttk.Button(grade_actions, text="Save Grade", command=self._save_current_grade).pack(side=tk.LEFT)
         ttk.Button(grade_actions, text="Export CSV", command=self._export_csv).pack(side=tk.LEFT, padx=6)
 
-        map_box = ttk.LabelFrame(right, text="Unmatched PDF Mapping", padding=8)
-        map_box.pack(fill=tk.X, pady=(10, 0))
-        self.unmatched_combo = ttk.Combobox(map_box, textvariable=self.unmatched_choice_var, state="readonly", width=28)
+        self.map_box = ttk.LabelFrame(right, text="Unmatched PDF Mapping", padding=8)
+        self.map_box.pack(fill=tk.X, pady=(10, 0))
+        self.unmatched_combo = ttk.Combobox(self.map_box, textvariable=self.unmatched_choice_var, state="readonly", width=28)
         self.unmatched_combo.pack(fill=tk.X, pady=(0, 4))
-        self.map_student_combo = ttk.Combobox(map_box, textvariable=self.map_student_choice_var, state="readonly", width=28)
+        self.map_student_combo = ttk.Combobox(self.map_box, textvariable=self.map_student_choice_var, state="readonly", width=28)
         self.map_student_combo.pack(fill=tk.X, pady=(0, 4))
-        ttk.Button(map_box, text="Assign PDF to Student", command=self._assign_mapping).pack(fill=tk.X)
+        ttk.Button(self.map_box, text="Assign PDF to Student", command=self._assign_mapping).pack(fill=tk.X)
 
-        out = ttk.LabelFrame(right, text="Output", padding=8)
-        out.pack(fill=tk.X, pady=(10, 0))
-        ttk.Button(out, text="Save State", command=self._save_state).pack(fill=tk.X)
-        ttk.Button(out, text="Clear State", command=self._clear_state_with_confirm).pack(fill=tk.X, pady=(6, 0))
 
     def _load_data(self):
         roster_path = Path(self.roster_path_var.get()).expanduser()
@@ -336,6 +356,19 @@ class QuizGraderApp:
                 command=self._update_score_preview,
             )
             cb.pack(anchor="w")
+
+        self.rubric_checks_frame.update_idletasks()
+        self._on_rubric_frame_configure(None)
+
+    def _on_rubric_frame_configure(self, _event):
+        if self.rubric_canvas is None:
+            return
+        self.rubric_canvas.configure(scrollregion=self.rubric_canvas.bbox("all"))
+
+    def _on_rubric_canvas_configure(self, event):
+        if self.rubric_canvas is None or self.rubric_canvas_window is None:
+            return
+        self.rubric_canvas.itemconfigure(self.rubric_canvas_window, width=event.width)
 
     def _refresh_mapping_controls(self):
         self.unmatched_combo["values"] = self.unmatched_files
