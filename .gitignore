@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+grading_state.json
+grades_export.csv
+.DS_Store
+Quiz1/
+.claude/
+*.csv
