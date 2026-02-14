@@ -95,10 +95,9 @@ class QuizGraderApp:
         ttk.Label(top, text="Submissions Folder").grid(row=1, column=0, sticky="w")
         ttk.Entry(top, textvariable=self.submissions_path_var, width=58).grid(row=1, column=1, sticky="we", padx=6)
         ttk.Button(top, text="Reload", command=self._load_data).grid(row=0, column=2, rowspan=2, padx=8)
-        ttk.Button(top, text="Reset", width=8, command=self._clear_state_with_confirm).grid(row=0, column=3, rowspan=2, padx=(0, 8))
 
-        ttk.Label(top, text="Full Score").grid(row=0, column=4, sticky="e")
-        ttk.Entry(top, textvariable=self.full_score_var, width=8).grid(row=0, column=5, sticky="w")
+        ttk.Label(top, text="Full Score").grid(row=0, column=3, sticky="e")
+        ttk.Entry(top, textvariable=self.full_score_var, width=8).grid(row=0, column=4, sticky="w")
 
         top.columnconfigure(1, weight=1)
 
@@ -213,6 +212,10 @@ class QuizGraderApp:
         self.map_student_combo = ttk.Combobox(self.map_box, textvariable=self.map_student_choice_var, state="readonly", width=28)
         self.map_student_combo.pack(fill=tk.X, pady=(0, 4))
         ttk.Button(self.map_box, text="Assign PDF to Student", command=self._assign_mapping).pack(fill=tk.X)
+
+        reset_row = ttk.Frame(right)
+        reset_row.pack(side=tk.BOTTOM, fill=tk.X, pady=(10, 0))
+        ttk.Button(reset_row, text="Reset", width=8, command=self._clear_state_with_confirm).pack(anchor="e")
 
 
     def _load_data(self):
