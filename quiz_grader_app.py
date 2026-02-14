@@ -67,6 +67,7 @@ class QuizGraderApp:
         self.add_rubric_points_var = tk.StringVar(value="1")
 
         self.comments_text = None
+        self._loading_form = False
         self.rubric_checks_frame = None
         self.rubric_canvas = None
         self.rubric_canvas_window = None
@@ -94,14 +95,10 @@ class QuizGraderApp:
         ttk.Label(top, text="Submissions Folder").grid(row=1, column=0, sticky="w")
         ttk.Entry(top, textvariable=self.submissions_path_var, width=58).grid(row=1, column=1, sticky="we", padx=6)
         ttk.Button(top, text="Reload", command=self._load_data).grid(row=0, column=2, rowspan=2, padx=8)
+        ttk.Button(top, text="Reset", width=8, command=self._clear_state_with_confirm).grid(row=0, column=3, rowspan=2, padx=(0, 8))
 
-        ttk.Label(top, text="Full Score").grid(row=0, column=3, sticky="e")
-        ttk.Entry(top, textvariable=self.full_score_var, width=8).grid(row=0, column=4, sticky="w")
-
-        top_output = ttk.LabelFrame(top, text="Output", padding=4)
-        top_output.grid(row=0, column=5, rowspan=2, sticky="ne", padx=(8, 0))
-        ttk.Button(top_output, text="Save", width=8, command=self._save_state).pack(fill=tk.X)
-        ttk.Button(top_output, text="Clear", width=8, command=self._clear_state_with_confirm).pack(fill=tk.X, pady=(4, 0))
+        ttk.Label(top, text="Full Score").grid(row=0, column=4, sticky="e")
+        ttk.Entry(top, textvariable=self.full_score_var, width=8).grid(row=0, column=5, sticky="w")
 
         top.columnconfigure(1, weight=1)
 
@@ -153,9 +150,9 @@ class QuizGraderApp:
         self.nav_bar = ttk.Frame(right, padding=(0, 8))
         self.nav_bar.pack(fill=tk.X)
         ttk.Button(self.nav_bar, text="Next Ungraded", command=self._go_next_ungraded).pack(side=tk.LEFT)
-        ttk.Button(self.nav_bar, text="Save + Next Ungraded", command=self._save_and_next_ungraded).pack(side=tk.LEFT, padx=6)
         ttk.Button(self.nav_bar, text="Previous", command=self._go_previous).pack(side=tk.LEFT, padx=6)
         ttk.Button(self.nav_bar, text="Next Student", command=self._go_next).pack(side=tk.LEFT)
+        ttk.Button(self.nav_bar, text="Export CSV", command=self._export_csv).pack(side=tk.LEFT, padx=6)
 
         self.rubric_setup_box = ttk.LabelFrame(right, text="Rubric Setup", padding=8)
         self.rubric_setup_box.pack(fill=tk.X)
@@ -193,7 +190,7 @@ class QuizGraderApp:
         extra.pack(fill=tk.X)
         ttk.Label(extra, text="Extra deduction").pack(side=tk.LEFT)
         ttk.Entry(extra, textvariable=self.extra_deduction_var, width=8).pack(side=tk.LEFT, padx=6)
-        self.extra_deduction_var.trace_add("write", lambda *_: self._update_score_preview())
+        self.extra_deduction_var.trace_add("write", lambda *_: self._on_form_changed())
 
         ttk.Label(self.grade_box, textvariable=self.computed_score_var, font=("TkDefaultFont", 12, "bold")).pack(
             anchor="w", pady=(8, 6)
@@ -202,11 +199,12 @@ class QuizGraderApp:
         ttk.Label(self.grade_box, text="Comments").pack(anchor="w")
         self.comments_text = tk.Text(self.grade_box, height=3, width=70)
         self.comments_text.pack(fill=tk.X, expand=False)
+        self.comments_text.bind("<KeyRelease>", lambda _e: self._on_form_changed())
+        self.comments_text.bind("<FocusOut>", lambda _e: self._on_form_changed())
 
         grade_actions = ttk.Frame(self.grade_box, padding=(0, 8, 0, 0))
         grade_actions.pack(fill=tk.X)
-        ttk.Button(grade_actions, text="Save Grade", command=self._save_current_grade).pack(side=tk.LEFT)
-        ttk.Button(grade_actions, text="Export CSV", command=self._export_csv).pack(side=tk.LEFT, padx=6)
+        ttk.Label(grade_actions, text="Auto-saves on edit/navigation").pack(side=tk.LEFT)
 
         self.map_box = ttk.LabelFrame(right, text="Unmatched PDF Mapping", padding=8)
         self.map_box.pack(fill=tk.X, pady=(10, 0))
@@ -353,7 +351,7 @@ class QuizGraderApp:
                 self.rubric_checks_frame,
                 text=f"{name} (-{self._fmt(points)})",
                 variable=var,
-                command=self._update_score_preview,
+                command=self._on_form_changed,
             )
             cb.pack(anchor="w")
 
@@ -460,12 +458,14 @@ class QuizGraderApp:
     def _load_form_from_record(self, netid):
         rec = self._get_record(netid, create=True)
         selected = set(rec.get("selected_rubrics", []))
+        self._loading_form = True
         for name, var in self.rubric_vars.items():
             var.set(1 if name in selected else 0)
 
         self.extra_deduction_var.set(self._fmt(self._safe_float(rec.get("extra_deduction", 0.0), 0.0)))
         self.comments_text.delete("1.0", tk.END)
         self.comments_text.insert("1.0", rec.get("comments", ""))
+        self._loading_form = False
         self._update_score_preview()
 
     def _show_current_student(self):
@@ -508,12 +508,11 @@ class QuizGraderApp:
         self._load_form_from_record(s["netid"])
         self._load_embedded_pdf_for_current()
 
-    def _save_current_grade(self):
-        if not self.students:
+    def _persist_current_form(self, mark_graded=False):
+        if not self.students or self._loading_form:
             return
         s = self._current_student()
-        netid = s["netid"]
-        rec = self._get_record(netid, create=True)
+        rec = self._get_record(s["netid"], create=True)
 
         if not s["submission"]:
             rec["graded"] = True
@@ -521,32 +520,52 @@ class QuizGraderApp:
             rec["score"] = 0.0
             rec["selected_rubrics"] = []
             rec["extra_deduction"] = 0.0
+            rec["total_deduction"] = 0.0
+            rec["comments"] = ""
         else:
             score, total_deduction, selected, extra = self._compute_score_for_current()
-            rec["graded"] = True
-            rec["status"] = "graded"
-            rec["score"] = score
             rec["selected_rubrics"] = selected
             rec["extra_deduction"] = extra
             rec["total_deduction"] = total_deduction
+            rec["score"] = score
+            rec["comments"] = self.comments_text.get("1.0", tk.END).strip()
+            if mark_graded:
+                rec["graded"] = True
+                rec["status"] = "graded"
 
-        rec["comments"] = self.comments_text.get("1.0", tk.END).strip()
         self._save_state()
-        self._show_current_student()
 
-    def _save_and_next_ungraded(self):
-        self._save_current_grade()
-        self._go_next_ungraded()
+    def _on_form_changed(self):
+        if self._loading_form:
+            return
+        self._update_score_preview()
+        self._persist_current_form(mark_graded=True)
+        if self.students:
+            rec = self._get_record(self._current_student()["netid"], create=True)
+            total = len(self.students)
+            submission_total = sum(1 for st in self.students if st["submission"])
+            manual_graded = sum(
+                1
+                for st in self.students
+                if st["submission"] and self._get_record(st["netid"], create=True).get("status") == "graded"
+            )
+            missing_auto_zero = total - submission_total
+            self.info_progress_var.set(
+                f"student {self.current_index + 1}/{total}, graded {manual_graded}/{submission_total} "
+                f"(missing auto-0: {missing_auto_zero}), status={rec.get('status', 'ungraded')}"
+            )
 
     def _go_previous(self):
         if not self.students:
             return
+        self._persist_current_form(mark_graded=True)
         self.current_index = (self.current_index - 1) % len(self.students)
         self._show_current_student()
 
     def _go_next(self):
         if not self.students:
             return
+        self._persist_current_form(mark_graded=True)
         self.current_index = (self.current_index + 1) % len(self.students)
         self._show_current_student()
 
@@ -560,6 +579,7 @@ class QuizGraderApp:
     def _go_next_ungraded(self):
         if not self.students:
             return
+        self._persist_current_form(mark_graded=True)
         n = len(self.students)
         start = self.current_index
         for offset in range(1, n + 1):
@@ -782,7 +802,7 @@ class QuizGraderApp:
 
     def _clear_state_with_confirm(self):
         confirmed = messagebox.askyesno(
-            "Clear State",
+            "Reset State",
             "This will permanently clear saved grades, rubric items, and manual PDF mappings.\n\nContinue?",
             icon="warning",
         )
@@ -796,12 +816,13 @@ class QuizGraderApp:
             if self.state_path.exists():
                 self.state_path.unlink()
         except Exception as exc:
-            messagebox.showerror("Clear State Failed", f"Could not remove state file:\n{exc}")
+            messagebox.showerror("Reset Failed", f"Could not remove state file:\n{exc}")
             return
         self._load_data()
-        messagebox.showinfo("State Cleared", "Saved grading state was cleared.")
+        messagebox.showinfo("State Reset", "Saved grading state was reset.")
 
     def _export_csv(self):
+        self._persist_current_form(mark_graded=True)
         out_path = self.export_path
         fieldnames = [
             "Net ID",
