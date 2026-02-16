@@ -351,16 +351,31 @@ class QuizGraderApp:
             points = float(item.get("points", 0))
             var = tk.IntVar(value=0)
             self.rubric_vars[name] = var
+            row = ttk.Frame(self.rubric_checks_frame)
+            row.pack(fill=tk.X, anchor="w")
             cb = ttk.Checkbutton(
-                self.rubric_checks_frame,
+                row,
                 text=f"{name} (-{self._fmt(points)})",
                 variable=var,
                 command=self._on_form_changed,
             )
-            cb.pack(anchor="w")
+            cb.pack(side=tk.LEFT, anchor="w")
+            ttk.Button(row, text="Remove", width=8, command=lambda n=name: self._remove_rubric_item(n)).pack(
+                side=tk.RIGHT
+            )
 
         self.rubric_checks_frame.update_idletasks()
         self._on_rubric_frame_configure(None)
+
+    def _remove_rubric_item(self, name):
+        self.rubric_items = [item for item in self.rubric_items if (item.get("name", "").strip() != name)]
+        for rec in self.grades.values():
+            selected = rec.get("selected_rubrics", [])
+            if isinstance(selected, list):
+                rec["selected_rubrics"] = [x for x in selected if x != name]
+        self._build_rubric_checkboxes()
+        self._show_current_student()
+        self._save_state()
 
     def _on_rubric_frame_configure(self, _event):
         if self.rubric_canvas is None:
