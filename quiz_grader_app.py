@@ -148,6 +148,7 @@ class QuizGraderApp:
 
         self.nav_bar = ttk.Frame(right, padding=(0, 8))
         self.nav_bar.pack(fill=tk.X)
+        ttk.Button(self.nav_bar, text="Grade + Next", command=self._grade_and_next).pack(side=tk.LEFT)
         ttk.Button(self.nav_bar, text="Next Ungraded", command=self._go_next_ungraded).pack(side=tk.LEFT)
         ttk.Button(self.nav_bar, text="Previous", command=self._go_previous).pack(side=tk.LEFT, padx=6)
         ttk.Button(self.nav_bar, text="Next Student", command=self._go_next).pack(side=tk.LEFT)
@@ -561,14 +562,14 @@ class QuizGraderApp:
     def _go_previous(self):
         if not self.students:
             return
-        self._persist_current_form(mark_graded=True)
+        self._persist_current_form(mark_graded=False)
         self.current_index = (self.current_index - 1) % len(self.students)
         self._show_current_student()
 
     def _go_next(self):
         if not self.students:
             return
-        self._persist_current_form(mark_graded=True)
+        self._persist_current_form(mark_graded=False)
         self.current_index = (self.current_index + 1) % len(self.students)
         self._show_current_student()
 
@@ -582,7 +583,7 @@ class QuizGraderApp:
     def _go_next_ungraded(self):
         if not self.students:
             return
-        self._persist_current_form(mark_graded=True)
+        self._persist_current_form(mark_graded=False)
         n = len(self.students)
         start = self.current_index
         for offset in range(1, n + 1):
@@ -594,6 +595,13 @@ class QuizGraderApp:
                 self._show_current_student()
                 return
         messagebox.showinfo("Done", "No ungraded students with submissions remain.")
+
+    def _grade_and_next(self):
+        if not self.students:
+            return
+        self._persist_current_form(mark_graded=True)
+        self.current_index = (self.current_index + 1) % len(self.students)
+        self._show_current_student()
 
     def _pdf_on_yscroll(self, first, last):
         self.pdf_canvas_y_scroll.set(first, last)
