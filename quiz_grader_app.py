@@ -423,6 +423,9 @@ class QuizGraderApp:
             if not s.get("submission"):
                 continue
             rec = self._get_record(s["netid"], create=True)
+            if rec.get("status") != "graded":
+                rec["score"] = None
+                continue
             selected = rec.get("selected_rubrics", [])
             if not isinstance(selected, list):
                 selected = []
@@ -639,11 +642,15 @@ class QuizGraderApp:
             rec["selected_rubrics"] = selected
             rec["extra_deduction"] = extra
             rec["total_deduction"] = total_deduction
-            rec["score"] = score
             rec["comments"] = self.comments_text.get("1.0", tk.END).strip()
             if mark_graded:
                 rec["graded"] = True
                 rec["status"] = "graded"
+                rec["score"] = score
+            else:
+                rec["graded"] = False
+                rec["status"] = "ungraded"
+                rec["score"] = None
 
         self._save_state()
 
@@ -651,7 +658,7 @@ class QuizGraderApp:
         if self._loading_form:
             return
         self._update_score_preview()
-        self._persist_current_form(mark_graded=True)
+        self._persist_current_form(mark_graded=False)
         if self.students:
             rec = self._get_record(self._current_student()["netid"], create=True)
             total = len(self.students)
@@ -969,7 +976,9 @@ class QuizGraderApp:
         messagebox.showinfo("State Reset", "Saved grading state was reset.")
 
     def _export_csv(self):
-        self._persist_current_form(mark_graded=True)
+        self._persist_current_form(mark_graded=False)
+        self._recalculate_all_scores()
+        self._save_state()
         out_path = self.export_path
         fieldnames = [
             "Net ID",
@@ -989,6 +998,8 @@ class QuizGraderApp:
             for s in self.students:
                 rec = self._get_record(s["netid"], create=True)
                 score = rec.get("score")
+                if rec.get("status") != "graded":
+                    score = None
                 writer.writerow(
                     {
                         "Net ID": s["netid"],
