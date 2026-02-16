@@ -154,7 +154,7 @@ class QuizGraderApp:
 
         self.nav_bar = ttk.Frame(right, padding=(0, 8))
         self.nav_bar.pack(fill=tk.X)
-        ttk.Button(self.nav_bar, text="Grade + Next", command=self._grade_and_next).pack(side=tk.LEFT)
+        ttk.Button(self.nav_bar, text="Grade + Next Ungraded", command=self._grade_and_next_ungraded).pack(side=tk.LEFT)
         ttk.Button(self.nav_bar, text="Next Ungraded", command=self._go_next_ungraded).pack(side=tk.LEFT)
         ttk.Button(self.nav_bar, text="Previous", command=self._go_previous).pack(side=tk.LEFT, padx=6)
         ttk.Button(self.nav_bar, text="Next Student", command=self._go_next).pack(side=tk.LEFT)
@@ -431,6 +431,13 @@ class QuizGraderApp:
     def _recalculate_all_scores(self):
         for s in self.students:
             if not s.get("submission"):
+                rec = self._get_record(s["netid"], create=True)
+                rec["status"] = "missing"
+                rec["graded"] = True
+                rec["score"] = 0.0
+                rec["selected_rubrics"] = []
+                rec["extra_deduction"] = 0.0
+                rec["total_deduction"] = 0.0
                 continue
             rec = self._get_record(s["netid"], create=True)
             if rec.get("status") != "graded":
@@ -750,12 +757,21 @@ class QuizGraderApp:
                 return
         messagebox.showinfo("Done", "No ungraded students with submissions remain.")
 
-    def _grade_and_next(self):
+    def _grade_and_next_ungraded(self):
         if not self.students:
             return
         self._persist_current_form(mark_graded=True)
-        self.current_index = (self.current_index + 1) % len(self.students)
-        self._show_current_student()
+        n = len(self.students)
+        start = self.current_index
+        for offset in range(1, n + 1):
+            i = (start + offset) % n
+            s = self.students[i]
+            rec = self._get_record(s["netid"], create=True)
+            if s["submission"] and not rec.get("graded", False):
+                self.current_index = i
+                self._show_current_student()
+                return
+        messagebox.showinfo("Done", "No ungraded students with submissions remain.")
 
     def _pdf_on_yscroll(self, first, last):
         self.pdf_canvas_y_scroll.set(first, last)
@@ -1048,7 +1064,9 @@ class QuizGraderApp:
                     rec["graded"] = False
                     rec["score"] = None
                 score = rec.get("score")
-                if rec.get("status") != "graded":
+                if rec.get("status") == "missing":
+                    score = 0.0
+                elif rec.get("status") != "graded":
                     score = None
                 writer.writerow(
                     {
