@@ -219,9 +219,13 @@ class QuizGraderApp:
 
         self.map_box = ttk.LabelFrame(right, text="Unmatched PDF Mapping", padding=8)
         self.map_box.pack(fill=tk.X, pady=(10, 0))
-        self.unmatched_combo = ttk.Combobox(self.map_box, textvariable=self.unmatched_choice_var, state="readonly", width=28)
+        self.unmatched_combo = ttk.Combobox(
+            self.map_box, textvariable=self.unmatched_choice_var, state="readonly", width=28, height=8
+        )
         self.unmatched_combo.pack(fill=tk.X, pady=(0, 4))
-        self.map_student_combo = ttk.Combobox(self.map_box, textvariable=self.map_student_choice_var, state="readonly", width=28)
+        self.map_student_combo = ttk.Combobox(
+            self.map_box, textvariable=self.map_student_choice_var, state="readonly", width=28, height=8
+        )
         self.map_student_combo.pack(fill=tk.X, pady=(0, 4))
         map_actions = ttk.Frame(self.map_box)
         map_actions.pack(fill=tk.X, pady=(0, 4))
