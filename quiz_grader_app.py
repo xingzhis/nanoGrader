@@ -50,6 +50,7 @@ class QuizGraderApp:
         self.pdf_page_offsets = []
         self.pdf_total_height = 1
         self.last_canvas_width = 0
+        self.unmatched_preview_path = None
 
         self.unmatched_choice_var = tk.StringVar()
         self.map_student_choice_var = tk.StringVar()
@@ -222,6 +223,10 @@ class QuizGraderApp:
         self.unmatched_combo.pack(fill=tk.X, pady=(0, 4))
         self.map_student_combo = ttk.Combobox(self.map_box, textvariable=self.map_student_choice_var, state="readonly", width=28)
         self.map_student_combo.pack(fill=tk.X, pady=(0, 4))
+        map_actions = ttk.Frame(self.map_box)
+        map_actions.pack(fill=tk.X, pady=(0, 4))
+        ttk.Button(map_actions, text="Preview Unmatched", command=self._preview_unmatched_pdf).pack(side=tk.LEFT)
+        ttk.Button(map_actions, text="Back to Student", command=self._exit_unmatched_preview).pack(side=tk.LEFT, padx=(6, 0))
         ttk.Button(self.map_box, text="Assign PDF to Student", command=self._assign_mapping).pack(fill=tk.X)
 
         reset_row = ttk.Frame(right)
@@ -244,6 +249,7 @@ class QuizGraderApp:
         self.student_by_netid = {}
         self.submissions = {}
         self.unmatched_files = []
+        self.unmatched_preview_path = None
 
         with roster_path.open(newline="", encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)
@@ -490,10 +496,15 @@ class QuizGraderApp:
         if not self.unmatched_files:
             self.unmatched_choice_var.set("")
 
-        student_labels = [f"{s['netid']} | {s['last']}, {s['first']}" for s in self.students]
+        # Only show students who do not already have a matched submission.
+        student_labels = [
+            f"{s['netid']} | {s['last']}, {s['first']}" for s in self.students if not s.get("submission")
+        ]
         self.map_student_combo["values"] = student_labels
         if student_labels and self.map_student_choice_var.get() not in student_labels:
             self.map_student_choice_var.set(student_labels[0])
+        if not student_labels:
+            self.map_student_choice_var.set("")
 
     def _assign_mapping(self):
         filename = self.unmatched_choice_var.get().strip()
@@ -524,10 +535,28 @@ class QuizGraderApp:
             rec["score"] = None
 
         self.unmatched_files = [x for x in self.unmatched_files if x != filename]
+        if self.unmatched_preview_path and Path(self.unmatched_preview_path).name == filename:
+            self.unmatched_preview_path = None
         self._refresh_mapping_controls()
         self._ensure_grade_defaults()
         self._show_current_student()
         self._save_state()
+
+    def _preview_unmatched_pdf(self):
+        filename = self.unmatched_choice_var.get().strip()
+        if not filename:
+            messagebox.showerror("Missing selection", "Pick an unmatched PDF to preview.")
+            return
+        path = Path(self.submissions_path_var.get()).expanduser() / filename
+        if not path.exists():
+            messagebox.showerror("Missing PDF", f"File not found:\n{path}")
+            return
+        self.unmatched_preview_path = str(path)
+        self._load_embedded_pdf_for_current()
+
+    def _exit_unmatched_preview(self):
+        self.unmatched_preview_path = None
+        self._load_embedded_pdf_for_current()
 
     def _safe_float(self, value, default=0.0):
         try:
@@ -648,9 +677,15 @@ class QuizGraderApp:
                 rec["status"] = "graded"
                 rec["score"] = score
             else:
-                rec["graded"] = False
-                rec["status"] = "ungraded"
-                rec["score"] = None
+                # Draft autosave should not silently ungrade a previously graded student.
+                if rec.get("status") == "graded" or rec.get("graded"):
+                    rec["graded"] = True
+                    rec["status"] = "graded"
+                    rec["score"] = score
+                else:
+                    rec["graded"] = False
+                    rec["status"] = "ungraded"
+                    rec["score"] = None
 
         self._save_state()
 
@@ -765,8 +800,13 @@ class QuizGraderApp:
             self.pdf_canvas.configure(scrollregion=(0, 0, 0, 0))
 
     def _load_embedded_pdf_for_current(self):
-        s = self._current_student()
-        if not s or not s.get("submission"):
+        if self.unmatched_preview_path:
+            path = self.unmatched_preview_path
+        else:
+            s = self._current_student()
+            path = s.get("submission") if s else None
+
+        if not path:
             self._close_pdf_doc()
             self._clear_pdf_canvas()
             self._pdf_set_status("PDF: missing submission")
@@ -778,7 +818,6 @@ class QuizGraderApp:
             self._pdf_set_status("PDF: install pymupdf + pillow")
             return
 
-        path = s["submission"]
         if self.current_pdf_path == path and self.pdf_doc is not None:
             self._render_pdf_document(preserve_view=True)
             return
@@ -872,8 +911,9 @@ class QuizGraderApp:
         page_count = len(self.pdf_doc)
         page_idx = self._current_page_from_view()
         name = Path(self.current_pdf_path).name if self.current_pdf_path else "-"
+        prefix = "[UNMATCHED PREVIEW] " if self.unmatched_preview_path else ""
         self._pdf_set_status(
-            f"PDF: {name}  page {page_idx + 1}/{page_count}  zoom {self.pdf_zoom_multiplier:.2f}x fit"
+            f"{prefix}PDF: {name}  page {page_idx + 1}/{page_count}  zoom {self.pdf_zoom_multiplier:.2f}x fit"
         )
 
     def _pdf_prev_page(self):
@@ -977,6 +1017,7 @@ class QuizGraderApp:
 
     def _export_csv(self):
         self._persist_current_form(mark_graded=False)
+        self._ensure_grade_defaults()
         self._recalculate_all_scores()
         self._save_state()
         out_path = self.export_path
@@ -997,6 +1038,11 @@ class QuizGraderApp:
             writer.writeheader()
             for s in self.students:
                 rec = self._get_record(s["netid"], create=True)
+                # Defensive normalization: mapped students with a submission should never export as missing.
+                if s.get("submission") and rec.get("status") == "missing":
+                    rec["status"] = "ungraded"
+                    rec["graded"] = False
+                    rec["score"] = None
                 score = rec.get("score")
                 if rec.get("status") != "graded":
                     score = None
