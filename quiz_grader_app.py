@@ -65,9 +65,12 @@ class QuizGraderApp:
 
         self.add_rubric_name_var = tk.StringVar()
         self.add_rubric_points_var = tk.StringVar(value="1")
+        self.rubric_action_var = tk.StringVar(value="Add Rubric")
 
         self.comments_text = None
         self._loading_form = False
+        self.editing_rubric_name = None
+        self.editing_rubric_index = None
         self.rubric_checks_frame = None
         self.rubric_canvas = None
         self.rubric_canvas_window = None
@@ -82,6 +85,8 @@ class QuizGraderApp:
         self.pdf_canvas = None
         self.pdf_canvas_x_scroll = None
         self.pdf_canvas_y_scroll = None
+        self.add_rubric_btn = None
+        self.cancel_rubric_edit_btn = None
 
         self._build_ui()
         self._load_data()
@@ -164,8 +169,11 @@ class QuizGraderApp:
         ttk.Label(add_row, text="Pts").pack(side=tk.LEFT)
         points_entry = ttk.Entry(add_row, textvariable=self.add_rubric_points_var, width=6)
         points_entry.pack(side=tk.LEFT, padx=4)
-        add_btn = ttk.Button(add_row, text="Add Rubric", command=self._add_rubric_item)
-        add_btn.pack(side=tk.LEFT, padx=(6, 0))
+        self.add_rubric_btn = ttk.Button(add_row, textvariable=self.rubric_action_var, command=self._add_rubric_item)
+        self.add_rubric_btn.pack(side=tk.LEFT, padx=(6, 0))
+        self.cancel_rubric_edit_btn = ttk.Button(add_row, text="Cancel", command=self._cancel_rubric_edit)
+        self.cancel_rubric_edit_btn.pack(side=tk.LEFT, padx=(4, 0))
+        self.cancel_rubric_edit_btn.pack_forget()
         name_entry.bind("<Return>", lambda _e: self._add_rubric_item())
         points_entry.bind("<Return>", lambda _e: self._add_rubric_item())
 
@@ -185,6 +193,8 @@ class QuizGraderApp:
         self.rubric_canvas_window = self.rubric_canvas.create_window((0, 0), window=self.rubric_checks_frame, anchor="nw")
         self.rubric_checks_frame.bind("<Configure>", self._on_rubric_frame_configure)
         self.rubric_canvas.bind("<Configure>", self._on_rubric_canvas_configure)
+        self.rubric_canvas.bind("<MouseWheel>", self._on_rubric_mousewheel)
+        self.rubric_checks_frame.bind("<MouseWheel>", self._on_rubric_mousewheel)
 
         extra = ttk.Frame(self.grade_box)
         extra.pack(fill=tk.X)
@@ -343,7 +353,9 @@ class QuizGraderApp:
         self.rubric_vars = {}
 
         if not self.rubric_items:
-            ttk.Label(self.rubric_checks_frame, text="No rubric deductions yet. Add one above.").pack(anchor="w")
+            msg = ttk.Label(self.rubric_checks_frame, text="No rubric deductions yet. Add one above.")
+            msg.pack(anchor="w")
+            self._bind_rubric_wheel_recursive(msg)
             return
 
         for item in self.rubric_items:
@@ -363,19 +375,72 @@ class QuizGraderApp:
             ttk.Button(row, text="Remove", width=8, command=lambda n=name: self._remove_rubric_item(n)).pack(
                 side=tk.RIGHT
             )
+            ttk.Button(row, text="Edit", width=8, command=lambda n=name: self._start_edit_rubric(n)).pack(
+                side=tk.RIGHT, padx=(4, 4)
+            )
+            self._bind_rubric_wheel_recursive(row)
 
         self.rubric_checks_frame.update_idletasks()
         self._on_rubric_frame_configure(None)
 
     def _remove_rubric_item(self, name):
         self.rubric_items = [item for item in self.rubric_items if (item.get("name", "").strip() != name)]
+        if self.editing_rubric_name == name:
+            self._cancel_rubric_edit()
         for rec in self.grades.values():
             selected = rec.get("selected_rubrics", [])
             if isinstance(selected, list):
                 rec["selected_rubrics"] = [x for x in selected if x != name]
+        self._recalculate_all_scores()
         self._build_rubric_checkboxes()
         self._show_current_student()
         self._save_state()
+
+    def _start_edit_rubric(self, name):
+        idx = next((i for i, x in enumerate(self.rubric_items) if (x.get("name", "").strip() == name)), None)
+        if idx is None:
+            return
+        item = self.rubric_items[idx]
+        self.editing_rubric_index = idx
+        self.editing_rubric_name = name
+        self.add_rubric_name_var.set(name)
+        self.add_rubric_points_var.set(self._fmt(self._safe_float(item.get("points", 0.0), 0.0)))
+        self.rubric_action_var.set("Update Rubric")
+        if self.cancel_rubric_edit_btn is not None:
+            self.cancel_rubric_edit_btn.pack(side=tk.LEFT, padx=(4, 0))
+
+    def _cancel_rubric_edit(self):
+        self.editing_rubric_name = None
+        self.editing_rubric_index = None
+        self.add_rubric_name_var.set("")
+        self.add_rubric_points_var.set("1")
+        self.rubric_action_var.set("Add Rubric")
+        if self.cancel_rubric_edit_btn is not None:
+            self.cancel_rubric_edit_btn.pack_forget()
+
+    def _recalculate_all_scores(self):
+        for s in self.students:
+            if not s.get("submission"):
+                continue
+            rec = self._get_record(s["netid"], create=True)
+            selected = rec.get("selected_rubrics", [])
+            if not isinstance(selected, list):
+                selected = []
+            score, total_deduction, extra = self._compute_score_from_values(selected, rec.get("extra_deduction", 0.0))
+            rec["score"] = score
+            rec["total_deduction"] = total_deduction
+            rec["extra_deduction"] = extra
+
+    def _compute_score_from_values(self, selected_names, extra_value):
+        full_score = self._safe_float(self.full_score_var.get(), 10.0)
+        rubric_points = {
+            (i.get("name", "") or "").strip(): self._safe_float(i.get("points", 0.0), 0.0) for i in self.rubric_items
+        }
+        total_deduction = sum(rubric_points.get(n, 0.0) for n in selected_names)
+        extra = self._safe_float(extra_value, 0.0)
+        total_deduction += extra
+        score = max(0.0, full_score - total_deduction)
+        return score, total_deduction, extra
 
     def _on_rubric_frame_configure(self, _event):
         if self.rubric_canvas is None:
@@ -386,6 +451,34 @@ class QuizGraderApp:
         if self.rubric_canvas is None or self.rubric_canvas_window is None:
             return
         self.rubric_canvas.itemconfigure(self.rubric_canvas_window, width=event.width)
+
+    def _on_rubric_mousewheel(self, event):
+        if self.rubric_canvas is None:
+            return
+        step = -1 * int(event.delta / 120)
+        if step == 0:
+            step = -1 if event.delta > 0 else 1
+        self.rubric_canvas.yview_scroll(step, "units")
+        return "break"
+
+    def _on_rubric_button4(self, _event):
+        if self.rubric_canvas is None:
+            return
+        self.rubric_canvas.yview_scroll(-1, "units")
+        return "break"
+
+    def _on_rubric_button5(self, _event):
+        if self.rubric_canvas is None:
+            return
+        self.rubric_canvas.yview_scroll(1, "units")
+        return "break"
+
+    def _bind_rubric_wheel_recursive(self, widget):
+        widget.bind("<MouseWheel>", self._on_rubric_mousewheel)
+        widget.bind("<Button-4>", self._on_rubric_button4)
+        widget.bind("<Button-5>", self._on_rubric_button5)
+        for child in widget.winfo_children():
+            self._bind_rubric_wheel_recursive(child)
 
     def _refresh_mapping_controls(self):
         self.unmatched_combo["values"] = self.unmatched_files
@@ -807,11 +900,39 @@ class QuizGraderApp:
         if points is None or points < 0:
             messagebox.showerror("Invalid rubric", "Deduction points must be a non-negative number.")
             return
-        if any((item.get("name", "").strip() == name) for item in self.rubric_items):
-            messagebox.showerror("Duplicate rubric", f"Rubric '{name}' already exists.")
-            return
-        self.rubric_items.append({"name": name, "points": points})
-        self.add_rubric_name_var.set("")
+
+        if self.editing_rubric_index is None:
+            if any((item.get("name", "").strip() == name) for item in self.rubric_items):
+                messagebox.showerror("Duplicate rubric", f"Rubric '{name}' already exists.")
+                return
+            self.rubric_items.append({"name": name, "points": points})
+            self.add_rubric_name_var.set("")
+            self.add_rubric_points_var.set("1")
+        else:
+            old_name = self.editing_rubric_name
+            edit_idx = self.editing_rubric_index
+            if edit_idx < 0 or edit_idx >= len(self.rubric_items):
+                self._cancel_rubric_edit()
+                messagebox.showerror("Edit failed", "Rubric edit target no longer exists.")
+                return
+
+            if name != old_name and any(
+                i != edit_idx and (item.get("name", "").strip() == name) for i, item in enumerate(self.rubric_items)
+            ):
+                messagebox.showerror("Duplicate rubric", f"Rubric '{name}' already exists.")
+                return
+
+            self.rubric_items[edit_idx]["name"] = name
+            self.rubric_items[edit_idx]["points"] = points
+
+            if name != old_name:
+                for rec in self.grades.values():
+                    selected = rec.get("selected_rubrics", [])
+                    if isinstance(selected, list):
+                        rec["selected_rubrics"] = [name if x == old_name else x for x in selected]
+            self._cancel_rubric_edit()
+
+        self._recalculate_all_scores()
         self._build_rubric_checkboxes()
         self._show_current_student()
         self._save_state()
